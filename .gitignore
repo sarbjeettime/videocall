@@ -1,0 +1,11 @@
+# Node
+node_modules/
+npm-debug.log
+.env
+
+# Build output
+dist/
+build/
+
+# Editor
+.vscode/
