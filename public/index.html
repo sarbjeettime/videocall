@@ -30,43 +30,9 @@
                     <button id="random-btn" class="secondary-btn">Random Code</button>
                 </div>
             </div>
-        </div>
 
-        <!-- Chat Screen -->
-        <div id="chat-screen" class="screen hidden">
-            <header class="chat-header">
-                <div class="room-info">
-                    <span class="label">Room:</span>
-                    <span id="display-room-code" class="code">CODE</span>
-                </div>
-                <button id="exit-btn" class="text-btn">Exit</button>
-            </header>
-
-            <div id="video-container" class="video-container">
-                <div id="video-wrapper" class="video-wrapper hidden">
-                    <video id="remote-video" autoplay playsinline></video>
-                    <video id="local-video" autoplay playsinline muted></video>
-                </div>
-                <div class="video-controls">
-                    <button id="toggle-video-btn" class="control-btn">Start Video</button>
-                    <button id="toggle-audio-btn" class="control-btn" disabled>Mute</button>
-                </div>
-            </div>
-
-            <div id="chat-messages" class="chat-messages">
-                <!-- Messages will appear here -->
-                <div class="system-message">Waiting for another person to join this room...</div>
-            </div>
-
-            <div class="chat-input-area">
-                <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
-                <button id="send-btn" disabled>Send</button>
-            </div>
-        </div>
-    </div>
-
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="client.js"></script>
+            <script src="/socket.io/socket.io.js"></script>
+            <script src="client.js"></script>
 </body>
 
 </html>

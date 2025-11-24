@@ -12,6 +12,11 @@ const chatMessages = document.getElementById('chat-messages');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 
+// New Control Elements
+const shareScreenBtn = document.getElementById('share-screen-btn');
+const switchCameraBtn = document.getElementById('switch-camera-btn');
+const toggleFlashBtn = document.getElementById('toggle-flash-btn');
+
 let currentRoomCode = '';
 
 // Helper Functions
@@ -138,7 +143,10 @@ const toggleVideoBtn = document.getElementById('toggle-video-btn');
 const toggleAudioBtn = document.getElementById('toggle-audio-btn');
 
 let localStream;
+let screenStream;
 let peerConnection;
+let currentCameraDeviceId;
+let isFlashOn = false;
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' } // Public STUN server
@@ -178,16 +186,46 @@ toggleAudioBtn.addEventListener('click', () => {
     }
 });
 
+shareScreenBtn.addEventListener('click', async () => {
+    if (!screenStream) {
+        try {
+            await startScreenShare();
+        } catch (err) {
+            console.error('Error sharing screen:', err);
+        }
+    } else {
+        stopScreenShare();
+    }
+});
+
+switchCameraBtn.addEventListener('click', async () => {
+    await switchCamera();
+});
+
+toggleFlashBtn.addEventListener('click', async () => {
+    await toggleFlashlight();
+});
+
 async function startVideo() {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.srcObject = localStream;
     videoWrapper.classList.remove('hidden');
+
+    // Enable buttons
+    shareScreenBtn.disabled = false;
+
+    // Check capabilities
+    await checkCameraCapabilities();
 }
 
 function stopVideo() {
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
         localStream = null;
+    }
+    if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        screenStream = null;
     }
     if (peerConnection) {
         peerConnection.close();
@@ -196,6 +234,12 @@ function stopVideo() {
     localVideo.srcObject = null;
     remoteVideo.srcObject = null;
     videoWrapper.classList.add('hidden');
+
+    shareScreenBtn.disabled = true;
+    shareScreenBtn.textContent = 'Share Screen';
+    shareScreenBtn.classList.remove('active');
+    switchCameraBtn.classList.add('hidden');
+    toggleFlashBtn.classList.add('hidden');
 }
 
 function createPeerConnection() {
@@ -270,3 +314,135 @@ socket.on('answer', async ({ answer }) => {
 socket.on('ice-candidate', async ({ candidate }) => {
     await handleCandidate(candidate);
 });
+
+// --- New Feature Logic ---
+
+async function startScreenShare() {
+    try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+
+        if (peerConnection) {
+            const senders = peerConnection.getSenders();
+            const videoSender = senders.find(s => s.track.kind === 'video');
+            if (videoSender) {
+                videoSender.replaceTrack(screenTrack);
+            }
+        }
+
+        localVideo.srcObject = screenStream;
+        shareScreenBtn.textContent = 'Stop Share';
+        shareScreenBtn.classList.add('active');
+
+        // Handle user stopping share via browser UI
+        screenTrack.onended = () => {
+            stopScreenShare();
+        };
+
+    } catch (err) {
+        console.error("Error starting screen share:", err);
+    }
+}
+
+function stopScreenShare() {
+    if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        screenStream = null;
+    }
+
+    if (localStream) {
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (peerConnection) {
+            const senders = peerConnection.getSenders();
+            const videoSender = senders.find(s => s.track.kind === 'video');
+            if (videoSender) {
+                videoSender.replaceTrack(videoTrack);
+            }
+        }
+        localVideo.srcObject = localStream;
+    }
+
+    shareScreenBtn.textContent = 'Share Screen';
+    shareScreenBtn.classList.remove('active');
+}
+
+async function checkCameraCapabilities() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+    if (videoDevices.length > 1) {
+        switchCameraBtn.classList.remove('hidden');
+    }
+
+    const track = localStream.getVideoTracks()[0];
+    const capabilities = track.getCapabilities();
+
+    if (capabilities.torch) {
+        toggleFlashBtn.classList.remove('hidden');
+    }
+}
+
+async function switchCamera() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+    if (videoDevices.length < 2) return;
+
+    // Find current device index
+    const currentTrack = localStream.getVideoTracks()[0];
+    const currentLabel = currentTrack.label;
+    const currentIndex = videoDevices.findIndex(d => d.label === currentLabel);
+
+    // Get next device
+    const nextIndex = (currentIndex + 1) % videoDevices.length;
+    const nextDevice = videoDevices[nextIndex];
+
+    // Get new stream
+    const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: nextDevice.deviceId } },
+        audio: true // Keep audio
+    });
+
+    // Stop old video track
+    currentTrack.stop();
+
+    // Update local stream
+    const newVideoTrack = newStream.getVideoTracks()[0];
+
+    // Replace track in local stream object (keep audio track)
+    localStream.removeTrack(currentTrack);
+    localStream.addTrack(newVideoTrack);
+
+    // Update video element
+    localVideo.srcObject = localStream;
+
+    // Replace track in PeerConnection
+    if (peerConnection) {
+        const senders = peerConnection.getSenders();
+        const videoSender = senders.find(s => s.track.kind === 'video');
+        if (videoSender) {
+            videoSender.replaceTrack(newVideoTrack);
+        }
+    }
+
+    // Re-check capabilities for new camera (e.g. flash might be available now)
+    const capabilities = newVideoTrack.getCapabilities();
+    if (capabilities.torch) {
+        toggleFlashBtn.classList.remove('hidden');
+    } else {
+        toggleFlashBtn.classList.add('hidden');
+    }
+}
+
+async function toggleFlashlight() {
+    const track = localStream.getVideoTracks()[0];
+    const capabilities = track.getCapabilities();
+
+    if (capabilities.torch) {
+        isFlashOn = !isFlashOn;
+        await track.applyConstraints({
+            advanced: [{ torch: isFlashOn }]
+        });
+        toggleFlashBtn.classList.toggle('active', isFlashOn);
+    }
+}
