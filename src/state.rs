@@ -1,4 +1,3 @@
-use actix_web::web;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -126,6 +125,3 @@ pub enum ServerMessage {
     #[serde(rename = "ice_candidate")]
     IceCandidate { candidate: serde_json::Value },
 }
-
-/// Type alias for the shared app data.
-pub type SharedState = web::Data<AppState>;
