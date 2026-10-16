@@ -1,6 +1,80 @@
-const socket = io();
+// --- WebSocket Connection (replaces Socket.IO) ---
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+let socket = null;
+let reconnectTimer = null;
 
-// DOM Elements
+function connectWebSocket() {
+    socket = new WebSocket(WS_URL);
+
+    socket.onopen = () => {
+        console.log('WebSocket connected');
+    };
+
+    socket.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleServerMessage(data);
+        } catch (e) {
+            console.error('Failed to parse server message:', e);
+        }
+    };
+
+    socket.onclose = () => {
+        console.log('WebSocket disconnected');
+        addSystemMessage('You have been disconnected from the server.');
+        // Attempt reconnect after 3 seconds
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => connectWebSocket(), 3000);
+    };
+
+    socket.onerror = (err) => {
+        console.error('WebSocket error:', err);
+    };
+}
+
+function sendMessage_ws(type, payload) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type, ...payload }));
+    }
+}
+
+function handleServerMessage(data) {
+    switch (data.type) {
+        case 'room_joined':
+            onRoomJoined(data);
+            break;
+        case 'room_full':
+            alert('Room is full. Please try another code.');
+            break;
+        case 'partner_connected':
+            chatMessages.innerHTML = '';
+            addSystemMessage('Partner connected! You can now chat.');
+            break;
+        case 'waiting_for_partner':
+            // Already handled by default message
+            break;
+        case 'chat_message':
+            addMessage(data.text, 'partner');
+            break;
+        case 'partner_disconnected':
+            addSystemMessage('Partner disconnected.');
+            break;
+        case 'error':
+            alert(data.message);
+            break;
+        case 'offer':
+            onOffer(data);
+            break;
+        case 'answer':
+            onAnswer(data);
+            break;
+        case 'ice_candidate':
+            onIceCandidate(data);
+            break;
+    }
+}
+
+// --- DOM Elements ---
 const homeScreen = document.getElementById('home-screen');
 const chatScreen = document.getElementById('chat-screen');
 const roomCodeInput = document.getElementById('room-code-input');
@@ -67,11 +141,11 @@ joinBtn.addEventListener('click', () => {
     }
 
     currentRoomCode = code;
-    socket.emit('join_room', { roomCode: currentRoomCode });
+    sendMessage_ws('join_room', { room_code: currentRoomCode });
 });
 
 exitBtn.addEventListener('click', () => {
-    location.reload(); // Simple way to reset state and disconnect
+    location.reload();
 });
 
 messageInput.addEventListener('input', () => {
@@ -80,16 +154,16 @@ messageInput.addEventListener('input', () => {
 
 messageInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter' && !sendBtn.disabled) {
-        sendMessage();
+        sendChatMessage();
     }
 });
 
-sendBtn.addEventListener('click', sendMessage);
+sendBtn.addEventListener('click', sendChatMessage);
 
-function sendMessage() {
+function sendChatMessage() {
     const text = messageInput.value.trim();
     if (text) {
-        socket.emit('chat_message', { roomCode: currentRoomCode, text });
+        sendMessage_ws('chat_message', { room_code: currentRoomCode, text });
         addMessage(text, 'you');
         messageInput.value = '';
         sendBtn.disabled = true;
@@ -97,44 +171,15 @@ function sendMessage() {
     }
 }
 
-// Socket Events
-socket.on('room_joined', ({ roomCode }) => {
+// Server event handlers
+function onRoomJoined(data) {
     showScreen('chat');
-    displayRoomCode.textContent = roomCode;
-    chatMessages.innerHTML = ''; // Clear previous messages
+    displayRoomCode.textContent = data.room_code;
+    chatMessages.innerHTML = '';
     addSystemMessage('Waiting for another person to join this room...');
-});
+}
 
-socket.on('room_full', () => {
-    alert('Room is full. Please try another code.');
-});
-
-socket.on('partner_connected', () => {
-    chatMessages.innerHTML = ''; // Clear "waiting" message
-    addSystemMessage('Partner connected! You can now chat.');
-});
-
-socket.on('waiting_for_partner', () => {
-    // Already handled by default message, but can update if needed
-});
-
-socket.on('chat_message', ({ text }) => {
-    addMessage(text, 'partner');
-});
-
-socket.on('partner_disconnected', () => {
-    addSystemMessage('Partner disconnected.');
-});
-
-socket.on('disconnect', () => {
-    addSystemMessage('You have been disconnected from the server.');
-});
-
-socket.on('error', (msg) => {
-    alert(msg);
-});
-
-// WebRTC Logic
+// --- WebRTC Logic ---
 const videoContainer = document.getElementById('video-container');
 const videoWrapper = document.getElementById('video-wrapper');
 const localVideo = document.getElementById('local-video');
@@ -149,7 +194,7 @@ let currentCameraDeviceId;
 let isFlashOn = false;
 const rtcConfig = {
     iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' } // Public STUN server
+        { urls: 'stun:stun.l.google.com:19302' }
     ]
 };
 
@@ -160,8 +205,6 @@ toggleVideoBtn.addEventListener('click', async () => {
             toggleVideoBtn.textContent = 'Stop Video';
             toggleVideoBtn.classList.add('active');
             toggleAudioBtn.disabled = false;
-
-            // Initiate call if partner is present
             createOffer();
         } catch (err) {
             console.error('Error accessing media devices:', err);
@@ -210,11 +253,7 @@ async function startVideo() {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.srcObject = localStream;
     videoWrapper.classList.remove('hidden');
-
-    // Enable buttons
     shareScreenBtn.disabled = false;
-
-    // Check capabilities
     await checkCameraCapabilities();
 }
 
@@ -249,8 +288,8 @@ function createPeerConnection() {
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-            socket.emit('ice-candidate', {
-                roomCode: currentRoomCode,
+            sendMessage_ws('ice_candidate', {
+                room_code: currentRoomCode,
                 candidate: event.candidate
             });
         }
@@ -271,8 +310,8 @@ async function createOffer() {
     createPeerConnection();
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    socket.emit('offer', {
-        roomCode: currentRoomCode,
+    sendMessage_ws('offer', {
+        room_code: currentRoomCode,
         offer: offer
     });
 }
@@ -282,8 +321,8 @@ async function createAnswer(offer) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    socket.emit('answer', {
-        roomCode: currentRoomCode,
+    sendMessage_ws('answer', {
+        room_code: currentRoomCode,
         answer: answer
     });
 }
@@ -298,24 +337,24 @@ async function handleCandidate(candidate) {
     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
 }
 
-// WebRTC Socket Events
-socket.on('offer', async ({ offer }) => {
+// WebRTC server event handlers
+async function onOffer(data) {
     if (!localStream) {
         addSystemMessage('Partner started video. Click "Start Video" to join.');
         return;
     }
-    await createAnswer(offer);
-});
+    await createAnswer(data.offer);
+}
 
-socket.on('answer', async ({ answer }) => {
-    await handleAnswer(answer);
-});
+async function onAnswer(data) {
+    await handleAnswer(data.answer);
+}
 
-socket.on('ice-candidate', async ({ candidate }) => {
-    await handleCandidate(candidate);
-});
+async function onIceCandidate(data) {
+    await handleCandidate(data.candidate);
+}
 
-// --- New Feature Logic ---
+// --- Screen Share & Camera ---
 
 async function startScreenShare() {
     try {
@@ -334,7 +373,6 @@ async function startScreenShare() {
         shareScreenBtn.textContent = 'Stop Share';
         shareScreenBtn.classList.add('active');
 
-        // Handle user stopping share via browser UI
         screenTrack.onended = () => {
             stopScreenShare();
         };
@@ -388,35 +426,27 @@ async function switchCamera() {
 
     if (videoDevices.length < 2) return;
 
-    // Find current device index
     const currentTrack = localStream.getVideoTracks()[0];
     const currentLabel = currentTrack.label;
     const currentIndex = videoDevices.findIndex(d => d.label === currentLabel);
 
-    // Get next device
     const nextIndex = (currentIndex + 1) % videoDevices.length;
     const nextDevice = videoDevices[nextIndex];
 
-    // Get new stream
     const newStream = await navigator.mediaDevices.getUserMedia({
         video: { deviceId: { exact: nextDevice.deviceId } },
-        audio: true // Keep audio
+        audio: true
     });
 
-    // Stop old video track
     currentTrack.stop();
 
-    // Update local stream
     const newVideoTrack = newStream.getVideoTracks()[0];
 
-    // Replace track in local stream object (keep audio track)
     localStream.removeTrack(currentTrack);
     localStream.addTrack(newVideoTrack);
 
-    // Update video element
     localVideo.srcObject = localStream;
 
-    // Replace track in PeerConnection
     if (peerConnection) {
         const senders = peerConnection.getSenders();
         const videoSender = senders.find(s => s.track.kind === 'video');
@@ -425,7 +455,6 @@ async function switchCamera() {
         }
     }
 
-    // Re-check capabilities for new camera (e.g. flash might be available now)
     const capabilities = newVideoTrack.getCapabilities();
     if (capabilities.torch) {
         toggleFlashBtn.classList.remove('hidden');
@@ -446,3 +475,6 @@ async function toggleFlashlight() {
         toggleFlashBtn.classList.toggle('active', isFlashOn);
     }
 }
+
+// --- Initialize ---
+connectWebSocket();

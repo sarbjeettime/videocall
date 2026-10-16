@@ -1,7 +1,11 @@
-# Node
+# Node (legacy)
 node_modules/
 npm-debug.log
 .env
+
+# Rust / Cargo
+target/
+Cargo.lock
 
 # Build output
 dist/

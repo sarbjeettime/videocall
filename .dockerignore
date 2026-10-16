@@ -1,0 +1,7 @@
+target/
+node_modules/
+.git/
+.cargo/
+*.md
+server.js
+package*.json
